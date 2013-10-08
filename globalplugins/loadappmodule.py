@@ -1,6 +1,9 @@
-# globales Plug-in zum einfacheren erstellen/laden von Anwendungsmodulen fuer nvda.
+﻿#coding=UTF-8
+# global Plug-in for easyer loading/creating Appmodules for NVDA.
 #
 # erstmal das benoetigte Zeugs rankarren:-)
+import wx
+import gui
 import globalPluginHandler
 import appModuleHandler
 import os
@@ -8,7 +11,8 @@ import config
 import api
 import ui
 import subprocess
-#
+import addonHandler
+addonHandler.initTranslation()
 # Klasse von globalpluginhandler-globalplugin ableiten
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	# unser Plugin soll an die Tastenkombination nvda+0 zugewiesen werden. Diese Zuweisung erfolgt in einem Woerterbuch, das den Namen __gestures__ haben muss.
@@ -17,13 +21,32 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 	}
 	# und nun folgt das eigentliche Script. Der name des Scripts stimmt zwar nicht ganz mit dem oben angegebenen Namen ueberein (das "Script_" fehlt, das stimmt aber so:-).
 	def script_loadappmodule(self, gesture):
-		# als erstes soll der name der aktuell laufenden Anwendung ermittelt werden. Dazu muss zuerst das Objekt ermittelt werden, das den Fokus hat. Eigentlich brauchen wir nicht das ganze objekt, sondern nur die ID des Prozesses, zu dem das objekt gehoert
-		focus=api.getFocusObject()
-		# und dann kann die Funktion getappnamefromprocessid benutzt werden, um den Namen der aktuellen Anwendng abzurufen. Diese Funktion erwartet zwei Parameter: als erstes wird die Id des Prozesses uebergeben, zu der der name abgerufen werden soll. der zweite Parameter gibt schliesslich an, ob die Dateinamenerweiterung mit zurueckgegeben werden soll. Da wir diese nicht brauchen, steht hier false.
-		appName=appModuleHandler.getAppNameFromProcessID(focus.processID,False)
-		# die folgende Liste enthaelt eine Vorlage fuer neueanwendungsmodule. Diese wird immer dann verwendet, wenn fuer die aktuelle Anwendung noch kein Modul existiert. Da Tab-Zeichen nicht direkt in Strin-Konstanten eingegeben werden koennen, muessen sie mit der chr-Funktion erzeugt werden. Das Tab-Zeichen besitzt den Ascii-Wert 9.
+		# die Funktion wx.CallAfter wird benutzt, um Code auszufuehren, *nachdem* alle Ereignisbehandlungsroutinen abgearbeitet sind. Dies gewaehrleistet, dass NVDA waehrend der Anzeige des meldungsfensters erwartungsgemaess reagiert. 
+		# Die Funktion CallAfter erwartet als ersten Parameter den Namen der Funktion, gefolgt von allen Argumenten (wahlweise benannt oder unbenannt).
+		# Wenn keine Argumente angegeben werden, wird die uebergebene Funktion (je nach Kontext) entweder ohne Argumente aufgerufen oder es wird ein Argument uebergeben, das die uebergeordnete Instanz darstellt (in unserem Fall das globale Plug-In)
+		# der Kontext self ist hier notwendig, weil unsere Funktion loadappmodule (genau wie das Script auch) Bestandteil des globalplugin-Objekts ist.
+		wx.CallAfter(self.loadappmodule, appModuleHandler.getAppNameFromProcessID(api.getFocusObject().processID,False))
+	# Unsere Funktion loadappmodule muss ein Argument entgegennehmen, das unser globales Plug-in darstellt, weil sie Bestandteil des globalen Plug-ins ist.
+	def userappmoduleexists(self, appname):
+		userconfigfile = config.getUserDefaultConfigPath()+chr(92)+'appModules'+chr(92)+appname+'.py'
+		if os.access(userconfigfile,os.F_OK): return userconfigfile
+		else: return None
+
+	def systemappmoduleexists(self, appname):
+		sysconfigfile = config.getSystemConfigPath()+chr(92)+'appModules'+chr(92)+appname+'.py'
+		if os.access(sysconfigfile,os.F_OK): return sysconfigfile
+		else: return None
+
+	def appmoduleprovidedbyaddon(self, appname):
+		l = list()
+		for addon in addonHandler.getRunningAddons():
+			if os.access(addon.path+chr(92)+'appmodules'+chr(92)+appname+'.py',os.F_OK): l.append(addon.manifest['name'])
+		if len(l) > 0: return ', '.join(l)
+		else: return None
+
+	def createnewappmodule(self, appname):
 		appmodule_template = [
-			'#appModules/'+appName.replace('.exe','')+'.py',
+			'#appModules/'+appname+'.py',
 			'#A part of NonVisual Desktop Access (NVDA)',
 			'#Copyright (C) 2006-2012 NVDA Contributors',
 			'#This file is covered by the GNU General Public License.',
@@ -40,46 +63,44 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
 			chr(9)+'desktop = api.getDesktopObject()',
 			chr(9)+'mouse = api.getMouseObject()'
 		]
-		# namen und vollstaendigen Pfad fuer das zu ladende Anwendungsmodul zusammensetzen:
-		# - ueber die Funktionen getUserDefaultConfigPath() und getSystemConfigPath() werden die Standorte der Konfigurationsverzeichnisse abgerufen, in denen die Anwendungsmodule des aktuellen Benutzers Bzw. diejenigen fuer alle Benutzer hinterlegt sind. Auf einem deutschen Windows xp waere dies beispielsweise c:\dokumente und Einstellungen/Benutzername/Anwendungsdaten/nvda Bzw. c:\dokumente und einstellungen/all users/anwendungsdaten/nvda. 
-		# - Da der inverse Schraegstrich nicht direkt als Zeichen in einer String-Konstanten eingegeben werden kann, muss er mit der Funktion chr erzeigt werden. Er besitzt den Ascii-Wert 92
-		# - String-Konstanten werden durch Pluszeichen miteinander verbunden
+		if self.l != '':
+			if gui.messageBox(message=self.warning_msg,
+			style=wx.YES|wx.NO|wx.ICON_WARNING)==wx.NO: return
+		userconfigfile = config.getUserDefaultConfigPath()+chr(92)+'appModules'+chr(92)+appname+'.py'
+		fd1 = open(userconfigfile,'w')
+		for line in appmodule_template:
+			fd1.write(line+os.linesep)
+		fd1.close()
+		ui.message(_('Creating a new Appmodule for {appname}').format(appname=appname))
+		self.warning_msg = ''
+	def copysystouser(self, appname):
 		userconfigfile = config.getUserDefaultConfigPath()+chr(92)+'appModules'+chr(92)+appName+'.py'
 		sysconfigfile = config.getSystemConfigPath()+chr(92)+'appModules'+chr(92)+appName+'.py'
-		# Falls im Benutzerverzeichnis noch kein Anwendungsmodul existiert
-		# - os.access Prueft die Zugriffsrechte auf eine Datei fuer den aktuellen Benutzer.
-		#   - der erste Parameter gibt die zu pruefende Datei an.
-		#   - der zweite parameter ist eine Konstante, die im Modul os definiert ist und angibt, welche Art des Zugriffs geprueft werden soll:
-		#     - r_ok prueft, ob die Datei theoretisch zum lesen geoeffnet werden koennte.
-		#     - w_ok prueft, ob die Datei theoretisch zum schreiben geoeffnet werden koennte.
-		#     -  f_ok prueft, ob eine Datei existiert.
-		if not os.access(userconfigfile,os.F_OK):
-			# existiert jedoch eine Datei im Konfigurationsverzeichnis fuer alle Benutzer
-			if os.access(sysconfigfile, os.F_OK) :
-				# die systemweite Konfigurationsdatei ins Benutzerverzeichnis zeilenweise kopieren:
-				# - die Funktion open oeffnet eine Datei und gibt ein Datei-objekt zurueck. der zweite Parameter gibt hierbei den Modus an, in dem die Datei geoeffnet werden soll (r = schreibgeschuetzt, a = zum Anhaengen von Daten)
-				fd1 = open(sysconfigfile,'r')
-				fd2 = open(userconfigfile,'a')
-				# eine Datei kann - wie eine Liste oder ein Woerterbuch - in einer for-Schleife durchlaufen werden. bei jeden Durchlauf wird in der Variablen Line eine Zeile der Datei gespeichert.
-				for line in fd1:
-					# die Dateiobjekte besitzen die Methode write, die als parameter die zu schreibenden daten uebernimmt.
-					fd2.write(line)
-				# Dateien schliessen
-				fd2.close()
-				fd1.close()
-			else:
-				# Falls nirgendwo ein Anwendungsmodul existiert, wird ein neues angelegt.
-				fd1 = open(userconfigfile,'w')
-				for line in appmodule_template:
-					# aus irgendeinem Grund versaeumt es Python, beim Schreiben von Zeilen aus unserer Vorlage diese ordentlich mit Zeilenumbruchzeichen abzuschliessen. Deshalb muss an jede Zeile die in os.linesep hinterlegte Zeichensequenz angehaengt werden.
-					fd1.write(line+os.linesep)
-				fd1.close()
-				# eine Meldung als Blitzmeldung ausgeben (oder ansagen, wenn eine sprachausgabe aktiv ist). Die Funktion _() gehoert zu gettext und schlaegt die ihr uebergebene Meldung in der Sprachdatei fuer die aktuell eingestellte Sprache nach. Existiert keine uebersetzung, so wird die originalmeldung zurueckgegeben. 
-				ui.message(_('new appmodule created.'))
-		# Anwendungsmodul in den Editor laden:
-		# - Das Modul subprocess besitzt die Methode Popen(), die externe programme startet, ohne auf das Ende des programms zu warten (der NVDA laeuft also im Hintergrund weiter).
-		#   - als erstes wird der Editor mit vollem Pfad aufgerufen. Um das windows-Verzeichnis zu ermitteln, wird es im Woerterbuch os.environ nachgeschlagen (dieses Woerterbuch speichert die Umgebungsvariablen des Systems.
-		#   - dem Editor wird der volle Pfad des Anwendungsmoduls uebergeben (in Anfuehrungszeichen eingeschlossen). Die Anfuehrungszeichen muessen hierbei mit der Funktion chr() erzeugt werden. Sie besitzen den Ascii-Wert 34.
-		subprocess.Popen(os.environ['WINDIR']+chr(92)+'notepad.exe '+chr(34)+userconfigfile+chr(34))
-# Dieser String speichert den hilfetext, der angezeigt und gesprochen wird, wenn ein Anwender bei eingeschalteter Eingabehilfe nvda+0 drueckt.
-	script_loadappmodule.__doc__=_("tries to load the appmodule for the currently running application or creates a new file, if it dowsn't exist yet.")
+		fd1 = open(sysconfigfile,'r')
+		fd2 = open(userconfigfile,'a')
+		for line in fd1:
+			fd2.write(line)
+		fd2.close()
+		fd1.close()
+
+	def loadappmodule(self, appName):
+		self.warning_msg = ''
+		if not self.userappmoduleexists(appName):
+			if  appModuleHandler.doesAppModuleExist(appName):
+				self.warning_msg += _("an Appmodule for {appname} was found at the following location(s):\n").format(appname=appName)
+				self.l = ''
+				if self.systemappmoduleexists(appName):
+					self.warning_msg += _("* in the sysconfig folder")
+					self.l += 's'
+				addons = self.appmoduleprovidedbyaddon(appName)
+				if addons: 
+					self.l += 'a'
+					self.warning_msg += _("* within the following addons(s): {addons}\n").format(addons=addons)
+				if self.l == '':
+					self.l += 'c'
+					self.warning_msg += _("There's allready an Appmodule for {appname} included in to NVDA but it is only included as a compiled file and it can't be loaded into notepad for editing.\n").format(appname=appName)
+				self.warning_msg += _("If you continue and create a new appmodule, the above one(s) will stop working.\nDo you really want to create a new Appmodule?")
+			self.createnewappmodule(appName)
+		userconfigfile = config.getUserDefaultConfigPath()+chr(92)+'appModules'+chr(92)+appName+'.py'
+		if self.warning_msg == '': subprocess.Popen(os.environ['WINDIR']+chr(92)+'notepad.exe '+chr(34)+userconfigfile+chr(34))
+	script_loadappmodule.__doc__=_("Loads an Appmodule for the current Programm into notepad or creates a new one if there isn't any.")
