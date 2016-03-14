@@ -15,6 +15,7 @@ import addonHandler
 addonHandler.initTranslation()
 # Klasse von globalpluginhandler-globalplugin ableiten
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
+	l = ''
 	# unser Plugin soll an die Tastenkombination nvda+0 zugewiesen werden. Diese Zuweisung erfolgt in einem Woerterbuch, das den Namen __gestures__ haben muss.
 	__gestures={
 		'kb:nvda+0':'loadappmodule'
